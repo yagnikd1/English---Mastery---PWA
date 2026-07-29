@@ -2,7 +2,6 @@ package com.englishmastery.offline;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -165,12 +164,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                String patch = "(function(){" +
-                        "window.download=function(data,name){AndroidBridge.saveJson(JSON.stringify(data,null,2),name||'english-mastery-backup.json');};" +
-                        "var b=document.getElementById('installAppButton');if(b)b.style.display='none';" +
-                        "var s=document.getElementById('installStatus');if(s)s.textContent='Installed as the English Mastery Android app.';" +
-                        "})();";
-                view.evaluateJavascript(patch, null);
+                view.evaluateJavascript(buildAndroidPatch(), null);
             }
 
             @Override
@@ -216,31 +210,110 @@ public final class MainActivity extends Activity {
         });
 
         root.addView(webView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        Button menu = new Button(this);
-        menu.setText("⋮");
-        menu.setTextSize(22);
-        menu.setTextColor(Color.WHITE);
-        menu.setBackgroundColor(Color.argb(145, 24, 31, 43));
-        menu.setOnClickListener(v -> showNativeMenu());
-        FrameLayout.LayoutParams menuParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.END);
-        menuParams.setMargins(0, dp(8), dp(8), 0);
-        root.addView(menu, menuParams);
-
         setContentView(root);
         webView.loadUrl("http://127.0.0.1:" + PORT + "/");
     }
 
-    private void showNativeMenu() {
-        String[] items = {"Reload course", "Choose another course folder", "About"};
-        new AlertDialog.Builder(this)
-                .setTitle("English Mastery")
-                .setItems(items, (dialog, which) -> {
-                    if (which == 0 && webView != null) webView.reload();
-                    if (which == 1) chooseFolder();
-                    if (which == 2) Toast.makeText(this, "English Mastery Android 1.0.0 · Fully local", Toast.LENGTH_LONG).show();
-                })
-                .show();
+    private String buildAndroidPatch() {
+        return """
+                (function(){
+                  if(window.__englishMasteryAndroidFixed)return;
+                  window.__englishMasteryAndroidFixed=true;
+
+                  window.download=function(data,name){
+                    AndroidBridge.saveJson(JSON.stringify(data,null,2),name||'english-mastery-backup.json');
+                  };
+
+                  var style=document.getElementById('android-v101-fixes');
+                  if(!style){
+                    style=document.createElement('style');
+                    style.id='android-v101-fixes';
+                    style.textContent=`
+                      .topbar{padding-top:6px!important}
+                      body.light{--muted:#465467!important;--line:#c7d0dc!important;--card2:#e8edf5!important;--accent2:#087f74!important}
+                      body.light .pill,body.light .tag{background:#dcf5f0!important;color:#087f74!important;border-color:#97d8cd!important}
+                      body.light .module-no,body.light .eyebrow,body.light .nav-item.active{color:#087f74!important}
+                      body.light .secondary{color:#101828!important;border-color:#b7c2d0!important}
+                      body.light .daily-task p,body.light .muted,body.light .empty-review,body.light .weekly-summary-grid span,body.light .daily-plan-summary span{color:#465467!important}
+                      #androidAppPanel .button-stack{margin-top:12px}
+                    `;
+                    document.head.appendChild(style);
+                  }
+
+                  function forceAndroidStatus(){
+                    var network=document.getElementById('networkBadge');
+                    var storage=document.getElementById('storageBadge');
+                    if(network&&network.textContent!=='OFFLINE APP')network.textContent='OFFLINE APP';
+                    if(storage&&storage.textContent!=='ON-DEVICE FILES')storage.textContent='ON-DEVICE FILES';
+                  }
+
+                  function reconcileDailyPlan(){
+                    var settings=typeof getDailyPlanSettings==='function'?getDailyPlanSettings():null;
+                    var target=settings&&Number(settings.minutesPerDay);
+                    if(!target)return;
+
+                    var summary=document.querySelector('#dailyPlan .daily-plan-summary');
+                    if(summary&&summary.children[0]){
+                      var value=summary.children[0].querySelector('b');
+                      var label=summary.children[0].querySelector('span');
+                      if(value&&value.textContent!==String(target))value.textContent=String(target);
+                      if(label&&label.textContent!=='daily target')label.textContent='daily target';
+                    }
+
+                    document.querySelectorAll('#dailyPlan .daily-task:not(.compact) p').forEach(function(p){
+                      if(!p.dataset.totalMinutes){
+                        var match=p.textContent.match(/^(Guided lesson\\s+\\d+)\\s+·\\s+about\\s+(\\d+)\\s+minutes$/);
+                        if(match){
+                          p.dataset.lessonPrefix=match[1];
+                          p.dataset.totalMinutes=match[2];
+                        }
+                      }
+                      if(p.dataset.totalMinutes){
+                        var wanted=p.dataset.lessonPrefix+' · '+p.dataset.totalMinutes+' min total · '+target+' min today';
+                        if(p.textContent!==wanted)p.textContent=wanted;
+                      }
+                    });
+                  }
+
+                  function addAndroidSettings(){
+                    var settingsScreen=document.querySelector('[data-screen="settings"]');
+                    if(!settingsScreen||document.getElementById('androidAppPanel'))return;
+                    var panel=document.createElement('section');
+                    panel.className='panel';
+                    panel.id='androidAppPanel';
+                    panel.innerHTML='<div class="section-head"><div><p class="muted">Native Android controls</p><h3>Android App</h3></div><span class="pill">v1.0.1</span></div><p class="muted">English Mastery runs fully on this device. No separate server app is required.</p><div class="button-stack"><button class="secondary" id="changeCourseFolderButton">Change course folder</button><button class="secondary" id="reloadAndroidCourseButton">Reload course</button></div>';
+                    settingsScreen.appendChild(panel);
+                    document.getElementById('changeCourseFolderButton').onclick=function(){AndroidBridge.chooseCourseFolder();};
+                    document.getElementById('reloadAndroidCourseButton').onclick=function(){location.reload();};
+                  }
+
+                  function hideInstallControls(){
+                    var button=document.getElementById('installAppButton');
+                    if(button)button.style.display='none';
+                    var status=document.getElementById('installStatus');
+                    if(status&&status.textContent!=='Installed as the English Mastery Android app.')status.textContent='Installed as the English Mastery Android app.';
+                  }
+
+                  var applying=false;
+                  function applyFixes(){
+                    if(applying)return;
+                    applying=true;
+                    try{
+                      forceAndroidStatus();
+                      reconcileDailyPlan();
+                      addAndroidSettings();
+                      hideInstallControls();
+                    }finally{
+                      applying=false;
+                    }
+                  }
+
+                  applyFixes();
+                  setTimeout(applyFixes,250);
+                  setTimeout(applyFixes,900);
+                  new MutationObserver(function(){requestAnimationFrame(applyFixes);}).observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class']});
+                })();
+                """;
     }
 
     private void handleWebPermission(PermissionRequest request) {
@@ -330,6 +403,11 @@ public final class MainActivity extends Activity {
                 intent.putExtra(Intent.EXTRA_TITLE, pendingDownloadName);
                 startActivityForResult(intent, REQUEST_SAVE_JSON);
             });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void chooseCourseFolder() {
+            runOnUiThread(MainActivity.this::chooseFolder);
         }
     }
 
