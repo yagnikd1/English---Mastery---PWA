@@ -5,6 +5,10 @@ on:
     paths:
       - 'android-wrapper/**'
       - '.github/workflows/build-android-apk.yml'
+  pull_request:
+    paths:
+      - 'android-wrapper/**'
+      - '.github/workflows/build-android-apk.yml'
   workflow_dispatch:
 
 permissions:
