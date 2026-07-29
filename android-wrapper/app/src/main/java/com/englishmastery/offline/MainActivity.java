@@ -50,17 +50,18 @@ public final class MainActivity extends Activity {
         getWindow().setStatusBarColor(Color.rgb(8, 12, 20));
         getWindow().setNavigationBarColor(Color.rgb(8, 12, 20));
 
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String saved = prefs.getString(KEY_TREE_URI, null);
-        if (saved == null) {
-            showFolderSetup("Select the extracted English Mastery folder once. After that, this app opens the course automatically without Simple HTTP Server.");
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String savedFolder = preferences.getString(KEY_TREE_URI, null);
+        if (savedFolder == null) {
+            showFolderSetup("Select the extracted English Mastery folder once. After that, the app opens automatically without Simple HTTP Server.");
         } else {
-            launchCourse(Uri.parse(saved));
+            launchCourse(Uri.parse(savedFolder));
         }
     }
 
     private void showFolderSetup(String message) {
         stopServer();
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER);
@@ -85,7 +86,7 @@ public final class MainActivity extends Activity {
         choose.setText("Choose English Mastery folder");
         choose.setAllCaps(false);
         choose.setTextSize(16);
-        choose.setOnClickListener(v -> chooseFolder());
+        choose.setOnClickListener(view -> chooseFolder());
 
         root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -127,10 +128,10 @@ public final class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 stopServer();
-                LocalWebServer newServer = new LocalWebServer(this, treeUri, PORT);
-                newServer.prepare();
-                newServer.start();
-                server = newServer;
+                LocalWebServer localServer = new LocalWebServer(this, treeUri, PORT);
+                localServer.prepare();
+                localServer.start();
+                server = localServer;
                 runOnUiThread(this::showWebView);
             } catch (Exception error) {
                 runOnUiThread(() -> showFolderSetup(
@@ -164,7 +165,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                view.evaluateJavascript(buildAndroidPatch(), null);
+                view.evaluateJavascript(AndroidEnhancements.JS, null);
             }
 
             @Override
@@ -188,9 +189,12 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
-                if (pendingFileChooser != null) pendingFileChooser.onReceiveValue(null);
-                pendingFileChooser = filePathCallback;
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (pendingFileChooser != null) {
+                    pendingFileChooser.onReceiveValue(null);
+                }
+                pendingFileChooser = callback;
+
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.setType("application/json");
@@ -204,8 +208,8 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                return super.onConsoleMessage(consoleMessage);
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                return super.onConsoleMessage(message);
             }
         });
 
@@ -214,117 +218,19 @@ public final class MainActivity extends Activity {
         webView.loadUrl("http://127.0.0.1:" + PORT + "/");
     }
 
-    private String buildAndroidPatch() {
-        return """
-                (function(){
-                  if(window.__englishMasteryAndroidFixed)return;
-                  window.__englishMasteryAndroidFixed=true;
-
-                  window.download=function(data,name){
-                    AndroidBridge.saveJson(JSON.stringify(data,null,2),name||'english-mastery-backup.json');
-                  };
-
-                  var style=document.getElementById('android-v101-fixes');
-                  if(!style){
-                    style=document.createElement('style');
-                    style.id='android-v101-fixes';
-                    style.textContent=`
-                      .topbar{padding-top:6px!important}
-                      body.light{--muted:#465467!important;--line:#c7d0dc!important;--card2:#e8edf5!important;--accent2:#087f74!important}
-                      body.light .pill,body.light .tag{background:#dcf5f0!important;color:#087f74!important;border-color:#97d8cd!important}
-                      body.light .module-no,body.light .eyebrow,body.light .nav-item.active{color:#087f74!important}
-                      body.light .secondary{color:#101828!important;border-color:#b7c2d0!important}
-                      body.light .daily-task p,body.light .muted,body.light .empty-review,body.light .weekly-summary-grid span,body.light .daily-plan-summary span{color:#465467!important}
-                      #androidAppPanel .button-stack{margin-top:12px}
-                    `;
-                    document.head.appendChild(style);
-                  }
-
-                  function forceAndroidStatus(){
-                    var network=document.getElementById('networkBadge');
-                    var storage=document.getElementById('storageBadge');
-                    if(network&&network.textContent!=='OFFLINE APP')network.textContent='OFFLINE APP';
-                    if(storage&&storage.textContent!=='ON-DEVICE FILES')storage.textContent='ON-DEVICE FILES';
-                  }
-
-                  function reconcileDailyPlan(){
-                    var settings=typeof getDailyPlanSettings==='function'?getDailyPlanSettings():null;
-                    var target=settings&&Number(settings.minutesPerDay);
-                    if(!target)return;
-
-                    var summary=document.querySelector('#dailyPlan .daily-plan-summary');
-                    if(summary&&summary.children[0]){
-                      var value=summary.children[0].querySelector('b');
-                      var label=summary.children[0].querySelector('span');
-                      if(value&&value.textContent!==String(target))value.textContent=String(target);
-                      if(label&&label.textContent!=='daily target')label.textContent='daily target';
-                    }
-
-                    document.querySelectorAll('#dailyPlan .daily-task:not(.compact) p').forEach(function(p){
-                      if(!p.dataset.totalMinutes){
-                        var match=p.textContent.match(/^(Guided lesson\\s+\\d+)\\s+·\\s+about\\s+(\\d+)\\s+minutes$/);
-                        if(match){
-                          p.dataset.lessonPrefix=match[1];
-                          p.dataset.totalMinutes=match[2];
-                        }
-                      }
-                      if(p.dataset.totalMinutes){
-                        var wanted=p.dataset.lessonPrefix+' · '+p.dataset.totalMinutes+' min total · '+target+' min today';
-                        if(p.textContent!==wanted)p.textContent=wanted;
-                      }
-                    });
-                  }
-
-                  function addAndroidSettings(){
-                    var settingsScreen=document.querySelector('[data-screen="settings"]');
-                    if(!settingsScreen||document.getElementById('androidAppPanel'))return;
-                    var panel=document.createElement('section');
-                    panel.className='panel';
-                    panel.id='androidAppPanel';
-                    panel.innerHTML='<div class="section-head"><div><p class="muted">Native Android controls</p><h3>Android App</h3></div><span class="pill">v1.0.1</span></div><p class="muted">English Mastery runs fully on this device. No separate server app is required.</p><div class="button-stack"><button class="secondary" id="changeCourseFolderButton">Change course folder</button><button class="secondary" id="reloadAndroidCourseButton">Reload course</button></div>';
-                    settingsScreen.appendChild(panel);
-                    document.getElementById('changeCourseFolderButton').onclick=function(){AndroidBridge.chooseCourseFolder();};
-                    document.getElementById('reloadAndroidCourseButton').onclick=function(){location.reload();};
-                  }
-
-                  function hideInstallControls(){
-                    var button=document.getElementById('installAppButton');
-                    if(button)button.style.display='none';
-                    var status=document.getElementById('installStatus');
-                    if(status&&status.textContent!=='Installed as the English Mastery Android app.')status.textContent='Installed as the English Mastery Android app.';
-                  }
-
-                  var applying=false;
-                  function applyFixes(){
-                    if(applying)return;
-                    applying=true;
-                    try{
-                      forceAndroidStatus();
-                      reconcileDailyPlan();
-                      addAndroidSettings();
-                      hideInstallControls();
-                    }finally{
-                      applying=false;
-                    }
-                  }
-
-                  applyFixes();
-                  setTimeout(applyFixes,250);
-                  setTimeout(applyFixes,900);
-                  new MutationObserver(function(){requestAnimationFrame(applyFixes);}).observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class']});
-                })();
-                """;
-    }
-
     private void handleWebPermission(PermissionRequest request) {
         boolean wantsAudio = false;
         for (String resource : request.getResources()) {
-            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) wantsAudio = true;
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                wantsAudio = true;
+            }
         }
+
         if (!wantsAudio) {
             request.deny();
             return;
         }
+
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
         } else {
@@ -355,13 +261,14 @@ public final class MainActivity extends Activity {
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try {
                 getContentResolver().takePersistableUriPermission(uri, flags);
-            } catch (SecurityException ignored) {
+            } catch (SecurityException firstError) {
                 try {
                     getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                } catch (SecurityException ignoredAgain) {
-                    // The temporary grant can still be used for this session.
+                } catch (SecurityException ignored) {
+                    // The temporary permission still works for this session.
                 }
             }
+
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_TREE_URI, uri.toString()).apply();
             launchCourse(uri);
             return;
@@ -379,7 +286,9 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_SAVE_JSON) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null && pendingDownloadJson != null) {
                 try (OutputStream output = getContentResolver().openOutputStream(data.getData(), "w")) {
-                    if (output == null) throw new IllegalStateException("Unable to open destination");
+                    if (output == null) {
+                        throw new IllegalStateException("Unable to open destination");
+                    }
                     output.write(pendingDownloadJson.getBytes(StandardCharsets.UTF_8));
                     Toast.makeText(this, "Backup saved.", Toast.LENGTH_SHORT).show();
                 } catch (Exception error) {
@@ -418,8 +327,20 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
+        if (webView != null) {
+            webView.evaluateJavascript(
+                    "document.getElementById('englishMasteryGuide')?" +
+                            "(EnglishMasteryHelp.closeGuide(false),true):false",
+                    result -> {
+                        if (!"true".equals(result)) {
+                            if (webView.canGoBack()) {
+                                webView.goBack();
+                            } else {
+                                moveTaskToBack(true);
+                            }
+                        }
+                    }
+            );
         } else {
             moveTaskToBack(true);
         }
