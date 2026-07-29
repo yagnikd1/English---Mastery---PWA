@@ -96,6 +96,8 @@ body.light .nav-item.active{
   color:#087f74!important;
   background:#d9f2ed!important;
 }
+#androidAppPanel .pill{font-size:0!important}
+#androidAppPanel .pill::after{content:"v1.0.2";font-size:11px!important}
 @media(max-width:360px){
   .bottom-nav{padding-left:4px!important;padding-right:4px!important;gap:2px!important}
   .nav-item small{font-size:12px!important}
