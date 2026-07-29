@@ -37,6 +37,12 @@ jobs:
       - name: Install Android platform
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
+      - name: Restore stable Android signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: english-mastery-android-signing-v1
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
