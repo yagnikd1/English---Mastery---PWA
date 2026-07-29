@@ -11,6 +11,7 @@ import android.webkit.MimeTypeMap;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -181,6 +182,11 @@ final class LocalWebServer {
     }
 
     private void serveEntry(OutputStream output, String method, Map<String, String> headers, String path, FileEntry entry) throws Exception {
+        if (path.endsWith("styles.css") && headers.get("range") == null) {
+            serveAugmentedStyles(output, method, entry);
+            return;
+        }
+
         long total = entry.size >= 0 ? entry.size : querySize(entry.uri);
         String mime = chooseMime(path, entry.mimeType);
         Range range = parseRange(headers.get("range"), total);
@@ -228,6 +234,39 @@ final class LocalWebServer {
             }
         }
         output.flush();
+    }
+
+    private void serveAugmentedStyles(OutputStream output, String method, FileEntry entry) throws Exception {
+        byte[] original = readAll(entry.uri);
+        byte[] material = Material3Css.CSS.getBytes(StandardCharsets.UTF_8);
+        long total = (long) original.length + material.length;
+
+        String header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: text/css; charset=utf-8\r\n" +
+                "Content-Length: " + total + "\r\n" +
+                "X-Content-Type-Options: nosniff\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "Connection: close\r\n\r\n";
+        output.write(header.getBytes(StandardCharsets.ISO_8859_1));
+        if (!"HEAD".equals(method)) {
+            output.write(original);
+            output.write(material);
+        }
+        output.flush();
+    }
+
+    private byte[] readAll(Uri uri) throws Exception {
+        try (InputStream input = resolver.openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new IOException("Unable to open stylesheet");
+            byte[] buffer = new byte[32 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
     }
 
     private long querySize(Uri uri) throws Exception {
